@@ -1,0 +1,58 @@
+name: Build iOS from patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GucciBot tag to port (see the tag list in the first step)"
+        default: "v2.0.0-beta.2"
+
+jobs:
+  build:
+    name: iOS
+    runs-on: macos-latest
+    steps:
+      - name: List upstream 2.0 tags
+        run: git ls-remote --tags https://github.com/Nigelx1/GucciBot "v2.0.0*" || true
+
+      # The original mod source, exactly as published.
+      - uses: actions/checkout@v4
+        with:
+          repository: Nigelx1/GucciBot
+          ref: ${{ inputs.ref }}
+
+      # This repo only holds the patch file.
+      - uses: actions/checkout@v4
+        with:
+          path: _mine
+
+      - name: Apply the iOS patch
+        run: |
+          git apply --check _mine/ios-port-2.0.0-beta.2.patch
+          git apply --stat _mine/ios-port-2.0.0-beta.2.patch | tail -3
+          git apply _mine/ios-port-2.0.0-beta.2.patch
+
+      # FFmpeg.exe, its DLLs and a demo video are Windows-only; leave them out of
+      # the iOS package (this edits the CI copy of mod.json only).
+      - name: Drop Windows-only resources from the iOS package
+        run: |
+          python3 - <<'PY'
+          import json
+          m = json.load(open('mod.json', encoding='utf-8'))
+          files = m.get('resources', {}).get('files', [])
+          drop = ('ffmpeg', '.dll', '.exe', '.mp4')
+          m['resources']['files'] = [f for f in files if not any(d in f.lower() for d in drop)]
+          json.dump(m, open('mod.json', 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+          print('resources:', len(files), '->', len(m['resources']['files']))
+          PY
+
+      - name: Build the mod
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          target: iOS
+          sdk: v5.10.1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guccibot-ios
+          path: ./build/*.geode
